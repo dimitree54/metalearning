@@ -51,6 +51,7 @@ def fc_layer(inputs, weights):
     return tf.sigmoid(outputs)
 
 
+@tf.function
 def build_net(inputs, weights_set):
     """
     Build sequential network from weights_se
@@ -135,7 +136,7 @@ def reconstruct_delta_weights(tn_output, sizes):
 
 def get_updated_weights(weights_set, deltas_set):
     """
-    returns a list of tensors with updated weights. WARNING! this function does not update weights variables, just
+    returns a list of tensors with updated weights.
      returns new values. To store this values call assign_updated_weights.
     """
     updated_weights_set = []
@@ -145,20 +146,6 @@ def get_updated_weights(weights_set, deltas_set):
         updated_weights = weights + deltas
         updated_weights_set.append(updated_weights)
     return updated_weights_set
-
-
-def assign_updated_weights(weights_set, new_weights_set):
-    """
-    returns op that updates weight variables with new values
-    """
-    # TODO does this function work? In tf2.0 assign returns not an op, but tensor.
-    assign_ops = []
-    for i in range(len(weights_set)):
-        weights = weights_set[i]
-        new_weights = new_weights_set[i]
-        assign_op = weights.assign(new_weights)
-        assign_ops.append(assign_op)
-    return tf.group(assign_ops)
 
 
 def get_loss(outputs, targets):
