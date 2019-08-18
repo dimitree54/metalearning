@@ -20,7 +20,7 @@ def get_random_net_description():
     """
     net_description = []
     num_layers = random.randint(1, MAX_NUM_LAYERS)
-    for _ in num_layers:
+    for _ in range(num_layers):
         net_description.append(random.randint(1, MAX_LAYER_SIZE))
     return net_description
 

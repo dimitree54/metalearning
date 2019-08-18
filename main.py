@@ -10,7 +10,8 @@ TN_OUTPUT_SIZE = 1
 SN_INPUT_SIZE = data.input_size
 SN_OUTPUT_SIZE = data.output_size
 
-inputs, targets = data.get_mnist_dataset(BATCH_SIZE)
+dataset = data.get_mnist_dataset(BATCH_SIZE)
+inputs, targets = next(dataset)
 
 sn_description = model.get_random_net_description()
 tn_description = model.get_tn_description()
