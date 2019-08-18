@@ -1,8 +1,8 @@
 import tensorflow as tf
 import random
 
-MAX_LAYER_SIZE = 128
-MAX_NUM_LAYERS = 10
+MAX_LAYER_SIZE = 16
+MAX_NUM_LAYERS = 5
 WEIGHTS_SIGMA = 0.1
 
 LOCAL_INFO_SIZE = 3
@@ -11,7 +11,7 @@ GLOBAL_INFO_SIZE = 1
 
 # net description is a list of num_units in hidden layers.
 def get_tn_description():
-    return [128, 128, 128]
+    return [16, 16, 16]
 
 
 def get_random_net_description():
@@ -35,9 +35,9 @@ def get_weights_from_description(net_description, input_size, output_size):
     extended_net_description.append(output_size)
     weights_set = []
     in_size = input_size
-    for out_size in net_description:
+    for out_size in extended_net_description:
         weights = tf.Variable(
-            initial_value=tf.initializers.GlorotNormal()(shape=[in_size + 1, out_size]),
+            initial_value=tf.initializers.RandomNormal(stddev=WEIGHTS_SIGMA)(shape=[in_size + 1, out_size]),
             trainable=True,
             dtype=tf.float32
         )
@@ -51,6 +51,8 @@ def fc_layer(inputs, weights):
     return tf.sigmoid(outputs)
 
 
+# TODO make model callable
+# TODO because net now callable, the build word is correct
 @tf.function
 def build_net(inputs, weights_set):
     """
@@ -63,13 +65,21 @@ def build_net(inputs, weights_set):
     track = []
     net_in = inputs
     for weights in weights_set:
-        net_in = tf.pad(inputs, [[0, 0], [0, 1]], constant_values=1)  # for bias. [bs,n]->[bs,n+1]
+        net_in = tf.pad(net_in, [[0, 0], [0, 1]], constant_values=1)  # for bias. [bs,n]->[bs,n+1]
         net_out = fc_layer(net_in, weights)
         track.append((net_in, weights, net_out))
         net_in = net_out
     return net_in, track
 
 
+def build_tn(track, loss, tn_weights):
+    tn_inputs, sizes = construct_tn_inputs(track, loss)
+    tn_outputs = [build_net(tn_inputs[i], tn_weights)[0] for i in range(len(tn_inputs))]
+    tn_outputs = reconstruct_delta_weights(tn_outputs, sizes)
+    return tn_outputs
+
+
+@tf.function
 def construct_tn_inputs(track, loss):
     """
     Convert sn track to tn_input by combining for each trainable weight scalar its
@@ -88,14 +98,17 @@ def construct_tn_inputs(track, loss):
         inputs, weights, outputs = layer_track
         n, m = weights.shape
 
-        def construct_tn_inputs_for_batch_sample(sample_inputs, sample_outputs, sample_loss):
+        def construct_tn_inputs_for_batch_sample(sample_info):
+            sample_inputs, sample_outputs, sample_loss = sample_info
+
             extended_sample_input = tf.expand_dims(sample_inputs, axis=1)  # [n] -> [n,1]
             extended_sample_input = tf.tile(extended_sample_input, [1, m])  # [n,1] -> [n,m]
 
             extended_sample_outputs = tf.expand_dims(sample_outputs, axis=0)  # [m] -> [1,m]
             extended_sample_outputs = tf.tile(extended_sample_outputs, [n, 1])  # [1,m] -> [n,m]
 
-            extended_sample_loss = tf.expand_dims(sample_loss, axis=0)  # [1] -> [1,1]
+            extended_sample_loss = tf.expand_dims(sample_loss, axis=0)  # [] -> [1]
+            extended_sample_loss = tf.expand_dims(extended_sample_loss, axis=0)  # [1] -> [1,1]
             extended_sample_loss = tf.tile(extended_sample_loss, [n, m])  # [1,1] -> [n,m]
 
             tn_input_for_batch_sample = tf.stack(
@@ -103,7 +116,7 @@ def construct_tn_inputs(track, loss):
             return tn_input_for_batch_sample  # [n,m,4]
 
         tn_inputs_per_batch_sample = tf.map_fn(
-            lambda s_in, s_out, s_loss: construct_tn_inputs_for_batch_sample(s_in, s_out, s_loss),
+            lambda sample_info: construct_tn_inputs_for_batch_sample(sample_info),
             [inputs, outputs, loss], dtype=tf.float32)
         return tn_inputs_per_batch_sample  # [bs,n,m,4]
 
@@ -115,25 +128,28 @@ def construct_tn_inputs(track, loss):
 
         # TODO check the order of reshape in both directions.
         tn_inputs_for_layer = tf.reshape(tn_inputs_for_layer, shape=[-1, 4])
+
         tn_inputs.append(tn_inputs_for_layer)
 
     return tn_inputs, sizes
 
 
+@tf.function
 def reconstruct_delta_weights(tn_output, sizes):
     """
     Reverts construct_tn_inputs operation but applied for tn_output. Also averages delta weights by batch dimension.
     :return: list of weight updated for each layer
     """
     delta_weights = []
-    for layer_size in sizes:
-        bs, n, m, _ = layer_size
-        layer_delta_weights = tf.reshape(tn_output, [bs, n, m])
+    for i in range(len(sizes)):
+        bs, n, m = sizes[i][0], sizes[i][1], sizes[i][2]
+        layer_delta_weights = tf.reshape(tn_output[i], [bs, n, m])
         layer_delta_weights = tf.reduce_mean(layer_delta_weights, axis=0)
         delta_weights.append(layer_delta_weights)
     return delta_weights
 
 
+@tf.function
 def get_updated_weights(weights_set, deltas_set):
     """
     returns a list of tensors with updated weights.
@@ -148,5 +164,6 @@ def get_updated_weights(weights_set, deltas_set):
     return updated_weights_set
 
 
+@ tf.function
 def get_loss(outputs, targets):
     return tf.sqrt(tf.reduce_sum(tf.square(outputs - targets), axis=1))
