@@ -22,4 +22,4 @@ def get_mnist_dataset(batch_size):
     dataset_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
     dataset_train = dataset_train.batch(batch_size)
 
-    return iter(dataset_train)
+    return dataset_train

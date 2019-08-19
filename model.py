@@ -1,8 +1,8 @@
 import tensorflow as tf
 import random
 
-MAX_LAYER_SIZE = 16
-MAX_NUM_LAYERS = 5
+MAX_LAYER_SIZE = 64
+MAX_NUM_LAYERS = 10
 WEIGHTS_SIGMA = 0.1
 
 LOCAL_INFO_SIZE = 3
@@ -11,7 +11,7 @@ GLOBAL_INFO_SIZE = 1
 
 # net description is a list of num_units in hidden layers.
 def get_tn_description():
-    return [16, 16, 16]
+    return [32, 32, 32, 32]
 
 
 def get_random_net_description():
@@ -25,7 +25,7 @@ def get_random_net_description():
     return net_description
 
 
-def get_weights_from_description(net_description, input_size, output_size):
+def get_weights_from_description(net_description, input_size, output_size, seed=None):
     """
     Generate weight tensors in accordance with net description.
      WARNING! to emulate bias each weight matrix have one extra row.
@@ -37,7 +37,7 @@ def get_weights_from_description(net_description, input_size, output_size):
     in_size = input_size
     for out_size in extended_net_description:
         weights = tf.Variable(
-            initial_value=tf.initializers.RandomNormal(stddev=WEIGHTS_SIGMA)(shape=[in_size + 1, out_size]),
+            initial_value=tf.initializers.RandomNormal(stddev=WEIGHTS_SIGMA, seed=seed)(shape=[in_size + 1, out_size]),
             trainable=True,
             dtype=tf.float32
         )
@@ -51,10 +51,8 @@ def fc_layer(inputs, weights):
     return tf.sigmoid(outputs)
 
 
-# TODO make model callable
-# TODO because net now callable, the build word is correct
 @tf.function
-def build_net(inputs, weights_set):
+def net(inputs, weights_set):
     """
     Build sequential network from weights_se
     :return: output, track
@@ -72,9 +70,9 @@ def build_net(inputs, weights_set):
     return net_in, track
 
 
-def build_tn(track, loss, tn_weights):
+def tn(track, loss, tn_weights):
     tn_inputs, sizes = construct_tn_inputs(track, loss)
-    tn_outputs = [build_net(tn_inputs[i], tn_weights)[0] for i in range(len(tn_inputs))]
+    tn_outputs = [net(tn_inputs[i], tn_weights)[0] for i in range(len(tn_inputs))]
     tn_outputs = reconstruct_delta_weights(tn_outputs, sizes)
     return tn_outputs
 
