@@ -15,11 +15,11 @@ def one_hot(data, depth):
 def get_mnist_dataset(batch_size):
     (x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
     
-    x_train = np.array(x_train, np.float32)
+    x_train = np.array(x_train, np.float32) / 255
     x_train = np.reshape(x_train, [-1, input_size])
     y_train = one_hot(y_train, output_size)
 
     dataset_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
-    dataset_train = dataset_train.batch(batch_size)
+    dataset_train = dataset_train.batch(batch_size).prefetch(10)
 
     return dataset_train

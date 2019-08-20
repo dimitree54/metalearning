@@ -3,7 +3,7 @@ import random
 
 MAX_LAYER_SIZE = 64
 MAX_NUM_LAYERS = 10
-WEIGHTS_SIGMA = 0.1
+WEIGHTS_SIGMA = 0.0001
 
 LOCAL_INFO_SIZE = 3
 GLOBAL_INFO_SIZE = 1
@@ -11,14 +11,15 @@ GLOBAL_INFO_SIZE = 1
 
 # net description is a list of num_units in hidden layers.
 def get_tn_description():
-    return [32, 32, 32, 32]
+    return [32, 32, 32]
 
 
-def get_random_net_description():
+def get_random_net_description(seed=None):
     """
     Generate random description
     """
     net_description = []
+    random.seed(seed)
     num_layers = random.randint(1, MAX_NUM_LAYERS)
     for _ in range(num_layers):
         net_description.append(random.randint(1, MAX_LAYER_SIZE))
@@ -122,7 +123,7 @@ def construct_tn_inputs(track, loss):
     sizes = []
     for i in range(len(track)):
         tn_inputs_for_layer = construct_tn_inputs_for_layer(track[i])
-        sizes.append(tn_inputs_for_layer.shape)
+        sizes.append(tf.shape(tn_inputs_for_layer))
 
         # TODO check the order of reshape in both directions.
         tn_inputs_for_layer = tf.reshape(tn_inputs_for_layer, shape=[-1, 4])
@@ -148,7 +149,7 @@ def reconstruct_delta_weights(tn_output, sizes):
 
 
 @tf.function
-def get_updated_weights(weights_set, deltas_set):
+def get_updated_weights(weights_set, deltas_set, lr):
     """
     returns a list of tensors with updated weights.
      returns new values. To store this values call assign_updated_weights.
@@ -156,7 +157,7 @@ def get_updated_weights(weights_set, deltas_set):
     updated_weights_set = []
     for i in range(len(weights_set)):
         weights = weights_set[i]
-        deltas = deltas_set[i]
+        deltas = deltas_set[i] * lr
         updated_weights = weights + deltas
         updated_weights_set.append(updated_weights)
     return updated_weights_set
