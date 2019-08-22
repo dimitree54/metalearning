@@ -2,9 +2,10 @@ import data
 import model
 import tensorflow as tf
 from tqdm import tqdm
+import time
 
-N_EPOCHS = 10
-BATCH_SIZE = 10
+N_EPOCHS = 1
+BATCH_SIZE = 11
 LR = 0.0001
 TN_INPUT_SIZE = model.LOCAL_INFO_SIZE + model.GLOBAL_INFO_SIZE
 TN_OUTPUT_SIZE = 1
@@ -24,11 +25,10 @@ summary_writer_grad = tf.summary.create_file_writer('./log/grad')
 summary_writer_tn_grad = tf.summary.create_file_writer('./log/tn_grad')
 summary_writer_tn_pure = tf.summary.create_file_writer('./log/tn_pure')
 
-for epoch in range(N_EPOCHS):
 
-    sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=epoch)
-
-    for step, (inputs, targets) in tqdm(enumerate(iter(dataset)), total=60000 // BATCH_SIZE, desc="epoch {}".format(epoch)):
+@tf.function
+def train_grad(sn_weights):
+    for step, (inputs, targets) in tqdm(dataset.enumerate(), total=1000 // BATCH_SIZE, desc="epoch {}".format(epoch)):
         with tf.GradientTape() as tape:
             sn_output, sn_track = model.net(inputs, sn_weights)
             sn_loss = model.get_loss(sn_output, targets)
@@ -51,9 +51,11 @@ for epoch in range(N_EPOCHS):
             tf.summary.scalar('loss{}'.format(epoch), tf.reduce_mean(new_sn_loss), step=step)
             tf.summary.scalar('mean delta', tf.reduce_mean(new_sn_output), step=step)
 
-    sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=epoch)
 
-    for step, (inputs, targets) in tqdm(enumerate(iter(dataset)), total=60000 // BATCH_SIZE, desc="epoch {}, pure".format(epoch)):
+@tf.function
+def train_pure(sn_weights):
+    for step, (inputs, targets) in dataset.enumerate():
+        print(step / 90)
         sn_output, sn_track = model.net(inputs, sn_weights)
         sn_loss = model.get_loss(sn_output, targets)
 
@@ -64,15 +66,12 @@ for epoch in range(N_EPOCHS):
         with summary_writer_tn_pure.as_default():
             tf.summary.scalar('loss{}'.format(epoch), tf.reduce_mean(sn_loss), step=step)
 
-sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=N_EPOCHS + 1)
 
-for step, (inputs, targets) in tqdm(enumerate(iter(dataset)), total=60000 // BATCH_SIZE, desc="final pure"):
-    sn_output, sn_track = model.net(inputs, sn_weights)
-    sn_loss = model.get_loss(sn_output, targets)
-
-    deltas_set = model.tn(sn_track, sn_loss, tn_weights)
-    new_sn_weights = model.get_updated_weights(sn_weights, deltas_set, lr=LR)
-    sn_weights = new_sn_weights  # for pure metalearning
-
-    with summary_writer_tn_pure.as_default():
-        tf.summary.scalar('loss_final', tf.reduce_mean(sn_loss), step=step)
+t = time.time()
+for epoch in range(N_EPOCHS):
+    sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=epoch)
+    train_grad(sn_weights)
+    input("READY")
+    sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=epoch)
+    train_pure(sn_weights)
+print(time.time() - t)

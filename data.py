@@ -17,9 +17,11 @@ def get_mnist_dataset(batch_size):
     
     x_train = np.array(x_train, np.float32) / 255
     x_train = np.reshape(x_train, [-1, input_size])
+    x_train = x_train[:1000]
     y_train = one_hot(y_train, output_size)
+    y_train = y_train[:1000]
 
     dataset_train = tf.data.Dataset.from_tensor_slices((x_train, y_train))
-    dataset_train = dataset_train.batch(batch_size).prefetch(10)
+    dataset_train = dataset_train.batch(batch_size)
 
     return dataset_train
