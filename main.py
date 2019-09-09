@@ -1,77 +1,34 @@
-import data
-import model
+from model.tn_model import *
+from model.regression_model import *
+from plotting.train_visualization import plot_history
+from metrics.regression_metrics import eval_regression, adversarial_training
+from options import *
+
+from data.tn_data_generator import get_training_data, get_target_weights
+from data.data_preprocessing import *
 import tensorflow as tf
-from tqdm import tqdm
-import time
 
-N_EPOCHS = 1
-BATCH_SIZE = 11
-LR = 0.0001
-TN_INPUT_SIZE = model.LOCAL_INFO_SIZE + model.GLOBAL_INFO_SIZE
-TN_OUTPUT_SIZE = 1
-SN_INPUT_SIZE = data.input_size
-SN_OUTPUT_SIZE = data.output_size
+sn_proto = get_net_proto_from_description(SN_DESCRIPTION)
 
-dataset = data.get_mnist_dataset(BATCH_SIZE)
+target_weights = get_target_weights(sn_proto)
+inputs, targets = get_training_data(sn_proto, target_weights)
 
-sn_description = model.get_random_net_description(0)
-tn_description = model.get_tn_description()
+inputs_mean, inputs_std = get_mean_std(inputs)
+inputs = normalize(inputs, inputs_mean, inputs_std)
+targets_mean, targets_std = get_mean_std(targets)
+targets = normalize(targets, targets_mean, targets_std)
+(train_inputs, train_targets), (val_inputs, val_targets) = split(inputs, targets)
+(val_inputs, val_targets), (test_inputs, test_targets) = split(val_inputs, val_targets)
 
-tn_weights = model.get_weights_from_description(tn_description, TN_INPUT_SIZE, TN_OUTPUT_SIZE)
+train_dataset = tf.data.Dataset.from_tensor_slices((train_inputs, train_targets))
+val_dataset = tf.data.Dataset.from_tensor_slices((val_inputs, val_targets))
+test_dataset = tf.data.Dataset.from_tensor_slices((test_inputs, test_targets))
 
-optimizer = tf.optimizers.SGD(LR)
-
-summary_writer_grad = tf.summary.create_file_writer('./log/grad')
-summary_writer_tn_grad = tf.summary.create_file_writer('./log/tn_grad')
-summary_writer_tn_pure = tf.summary.create_file_writer('./log/tn_pure')
-
-
-@tf.function
-def train_grad(sn_weights):
-    for step, (inputs, targets) in tqdm(dataset.enumerate(), total=1000 // BATCH_SIZE, desc="epoch {}".format(epoch)):
-        with tf.GradientTape() as tape:
-            sn_output, sn_track = model.net(inputs, sn_weights)
-            sn_loss = model.get_loss(sn_output, targets)
-
-        sn_gradients = tape.gradient(sn_loss, sn_weights)
-        optimizer.apply_gradients(zip(sn_gradients, sn_weights))
-
-        with tf.GradientTape() as tape:
-            deltas_set = model.tn(sn_track, sn_loss, tn_weights)
-            new_sn_weights = model.get_updated_weights(sn_weights, deltas_set, lr=1)
-            new_sn_output, _ = model.net(inputs, new_sn_weights)
-            new_sn_loss = model.get_loss(new_sn_output, targets)
-
-        tn_gradients = tape.gradient(new_sn_loss, tn_weights)
-        optimizer.apply_gradients(zip(tn_gradients, tn_weights))
-
-        with summary_writer_grad.as_default():
-            tf.summary.scalar('loss{}'.format(epoch), tf.reduce_mean(sn_loss), step=step)
-        with summary_writer_tn_grad.as_default():
-            tf.summary.scalar('loss{}'.format(epoch), tf.reduce_mean(new_sn_loss), step=step)
-            tf.summary.scalar('mean delta', tf.reduce_mean(new_sn_output), step=step)
-
-
-@tf.function
-def train_pure(sn_weights):
-    for step, (inputs, targets) in dataset.enumerate():
-        print(step / 90)
-        sn_output, sn_track = model.net(inputs, sn_weights)
-        sn_loss = model.get_loss(sn_output, targets)
-
-        deltas_set = model.tn(sn_track, sn_loss, tn_weights)
-        new_sn_weights = model.get_updated_weights(sn_weights, deltas_set, lr=LR)
-        sn_weights = new_sn_weights  # for pure metalearning
-
-        with summary_writer_tn_pure.as_default():
-            tf.summary.scalar('loss{}'.format(epoch), tf.reduce_mean(sn_loss), step=step)
-
-
-t = time.time()
-for epoch in range(N_EPOCHS):
-    sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=epoch)
-    train_grad(sn_weights)
-    input("READY")
-    sn_weights = model.get_weights_from_description(sn_description, SN_INPUT_SIZE, SN_OUTPUT_SIZE, seed=epoch)
-    train_pure(sn_weights)
-print(time.time() - t)
+for model_name in TN_DESCRIPTIONS:
+    print("Start training {} model".format(model_name))
+    model = build_keras_model_from_description(TN_DESCRIPTIONS[model_name])
+    history = train_model(model, train_dataset, val_dataset)
+    print("{} MODEL RESULTS:".format(model_name))
+    # plot_history(history)
+    # eval_regression(model, test_dataset)
+    adversarial_training(model, target_weights, sn_proto, inputs_mean, inputs_std, targets_mean, targets_std)

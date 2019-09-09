@@ -1,61 +1,72 @@
 import tensorflow as tf
 import random
-
-MAX_LAYER_SIZE = 64
-MAX_NUM_LAYERS = 10
-WEIGHTS_SIGMA = 0.0001
-
-LOCAL_INFO_SIZE = 3
-GLOBAL_INFO_SIZE = 1
+import numpy as np
 
 
-# net description is a list of num_units in hidden layers.
-def get_tn_description():
-    return [32, 32, 32]
-
-
-def get_random_net_description(seed=None):
+def get_random_net_description(input_size, output_size, max_layer_size, max_num_layers, seed=None):
     """
-    Generate random description
+    Generate random description. Description is a list of layer sizes (first number - input size)
     """
-    net_description = []
+    net_description = [input_size]
     random.seed(seed)
-    num_layers = random.randint(1, MAX_NUM_LAYERS)
+    num_layers = random.randint(1, max_num_layers)
     for _ in range(num_layers):
-        net_description.append(random.randint(1, MAX_LAYER_SIZE))
+        net_description.append(random.randint(1, max_layer_size))
+    net_description.append(output_size)
     return net_description
 
 
-def get_weights_from_description(net_description, input_size, output_size, seed=None):
+def get_net_proto_from_description(description):
+    """
+    Generate net proto from description. Net proto is a list of layer's weights sizes.
+    """
+    net_proto = []
+    in_size = description[0]
+    for i in range(1, len(description)):
+        out_size = description[i]
+        net_proto.append((in_size + 1, out_size))  # +1 to emulate bias
+        in_size = out_size
+    return net_proto
+
+
+def get_weights_from_proto(net_proto, sigma, seed=None):
     """
     Generate weight tensors in accordance with net description.
-     WARNING! to emulate bias each weight matrix have one extra row.
-    :return: list of weight tensors
     """
-    extended_net_description = net_description.copy()
-    extended_net_description.append(output_size)
-    weights_set = []
-    in_size = input_size
-    for out_size in extended_net_description:
+    net_weights = []
+    initializer = tf.initializers.RandomNormal(stddev=sigma, seed=seed)
+    for size in net_proto:
         weights = tf.Variable(
-            initial_value=tf.initializers.RandomNormal(stddev=WEIGHTS_SIGMA, seed=seed)(shape=[in_size + 1, out_size]),
+            initial_value=initializer(shape=[size[0], size[1]]),
             trainable=True,
             dtype=tf.float32
         )
-        weights_set.append(weights)
-        in_size = out_size
-    return weights_set
+        net_weights.append(weights)
+    return net_weights
 
 
-def fc_layer(inputs, weights):
+def fc_layer(inputs, weights, activation=tf.sigmoid):
     outputs = tf.matmul(inputs, weights)
-    return tf.sigmoid(outputs)
+    return activation(outputs)
+
+
+def save_net_weights(path, net_weights):
+    net_weights_numpy = [net_weights_tensor.numpy() for net_weights_tensor in net_weights]
+    np.savez_compressed(path, *net_weights_numpy)
+
+
+def load_net_weights(path):
+    net_weights_numpy = np.load(path)
+    net_weights_tensor = []
+    for name in net_weights_numpy:
+        net_weights_tensor.append(tf.Variable(initial_value=net_weights_numpy[name]))
+    return net_weights_tensor
 
 
 @tf.function
 def net(inputs, weights_set):
     """
-    Build sequential network from weights_se
+    Build sequential network from weights_set
     :return: output, track
      output - is an output tensor of net
      track - is a list which stores information about internal computations:
@@ -72,9 +83,29 @@ def net(inputs, weights_set):
 
 
 def tn(track, loss, tn_weights):
-    tn_inputs, sizes = construct_tn_inputs(track, loss)
+    tn_inputs = construct_tn_inputs(track, loss)
     tn_outputs = [net(tn_inputs[i], tn_weights)[0] for i in range(len(tn_inputs))]
-    tn_outputs = reconstruct_delta_weights(tn_outputs, sizes)
+    tn_outputs = reconstruct_delta_weights(tn_outputs)
+    return tn_outputs
+
+
+@tf.function
+def construct_tn_outputs(gradients, batch_size, gradients_batched=False):
+    def construct_tn_outputs_for_layer(layer_gradients):
+        extended_layer_gradients = tf.expand_dims(layer_gradients, axis=0)  # [n,m] -> [1,n,m]
+        extended_layer_gradients = tf.tile(extended_layer_gradients, [batch_size, 1, 1])  # [1,n,m] -> [bs,n,m]
+        return extended_layer_gradients  # [bs,n,m]
+
+    tn_outputs = []
+    for i in range(len(gradients)):
+        if gradients_batched:
+            tn_outputs_for_layer = gradients[i]
+        else:
+            tn_outputs_for_layer = construct_tn_outputs_for_layer(gradients[i])
+        tn_outputs_for_layer = tf.reshape(tn_outputs_for_layer, shape=[-1])
+
+        tn_outputs.append(tn_outputs_for_layer)
+
     return tn_outputs
 
 
@@ -120,49 +151,30 @@ def construct_tn_inputs(track, loss):
         return tn_inputs_per_batch_sample  # [bs,n,m,4]
 
     tn_inputs = []
-    sizes = []
     for i in range(len(track)):
         tn_inputs_for_layer = construct_tn_inputs_for_layer(track[i])
-        sizes.append(tf.shape(tn_inputs_for_layer))
-
-        # TODO check the order of reshape in both directions.
         tn_inputs_for_layer = tf.reshape(tn_inputs_for_layer, shape=[-1, 4])
 
         tn_inputs.append(tn_inputs_for_layer)
 
-    return tn_inputs, sizes
+    return tn_inputs
 
 
 @tf.function
-def reconstruct_delta_weights(tn_output, sizes):
+def reconstruct_delta_weights(tn_output, batch_size, sn_proto):
     """
     Reverts construct_tn_inputs operation but applied for tn_output. Also averages delta weights by batch dimension.
     :return: list of weight updated for each layer
     """
     delta_weights = []
-    for i in range(len(sizes)):
-        bs, n, m = sizes[i][0], sizes[i][1], sizes[i][2]
-        layer_delta_weights = tf.reshape(tn_output[i], [bs, n, m])
+    for i in range(len(sn_proto)):
+        n, m = sn_proto[i]
+        layer_delta_weights = tf.reshape(tn_output[i], [batch_size, n, m])
         layer_delta_weights = tf.reduce_mean(layer_delta_weights, axis=0)
         delta_weights.append(layer_delta_weights)
     return delta_weights
 
 
 @tf.function
-def get_updated_weights(weights_set, deltas_set, lr):
-    """
-    returns a list of tensors with updated weights.
-     returns new values. To store this values call assign_updated_weights.
-    """
-    updated_weights_set = []
-    for i in range(len(weights_set)):
-        weights = weights_set[i]
-        deltas = deltas_set[i] * lr
-        updated_weights = weights + deltas
-        updated_weights_set.append(updated_weights)
-    return updated_weights_set
-
-
-@ tf.function
 def get_loss(outputs, targets):
     return tf.sqrt(tf.reduce_sum(tf.square(outputs - targets), axis=1))
