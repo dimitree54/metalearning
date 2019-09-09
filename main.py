@@ -7,6 +7,7 @@ from options import *
 from data.tn_data_generator import get_training_data, get_target_weights
 from data.data_preprocessing import *
 import tensorflow as tf
+import os
 
 sn_proto = get_net_proto_from_description(SN_DESCRIPTION)
 
@@ -25,10 +26,18 @@ val_dataset = tf.data.Dataset.from_tensor_slices((val_inputs, val_targets))
 test_dataset = tf.data.Dataset.from_tensor_slices((test_inputs, test_targets))
 
 for model_name in TN_DESCRIPTIONS:
-    print("Start training {} model".format(model_name))
-    model = build_keras_model_from_description(TN_DESCRIPTIONS[model_name])
-    history = train_model(model, train_dataset, val_dataset)
+    file_name = "{}.h5".format(model_name)
+
+    if os.path.exists(file_name):
+        model = keras.models.load_model(file_name)
+        print("Previously trained model loaded")
+    else:
+        print("Start training {} model".format(model_name))
+        model = build_keras_model_from_description(TN_DESCRIPTIONS[model_name])
+        history = train_model(model, train_dataset, val_dataset)
+        plot_history(history)
+        model.save("{}.h5".format(model_name))
+
     print("{} MODEL RESULTS:".format(model_name))
-    # plot_history(history)
-    # eval_regression(model, test_dataset)
+    eval_regression(model, test_dataset)
     adversarial_training(model, target_weights, sn_proto, inputs_mean, inputs_std, targets_mean, targets_std)

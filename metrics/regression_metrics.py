@@ -8,8 +8,6 @@ from data.data_preprocessing import normalize, denormalize
 
 from tqdm import tqdm
 
-tf.debugging.set_log_device_placement(True)
-
 
 # @tf.function
 def train_adversarial(model, init_sn_weights, sn_proto, inputs_mean, inputs_std, targets_mean, targets_std):
